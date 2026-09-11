@@ -28,3 +28,63 @@ Protection physique de la clé (extraction possible du nRF24LE1, pas un secure e
 Couper l'accès SPI/PROG une fois le fob finalisé
 Rate-limiting côté récepteur, validation stricte des trames
 Compromis autonomie/timeout à ajuster empiriquement (pile CR2032)
+
+
+Plan de développement logiciel — RKE/PKS DIY
+
+Phase 0 — Mise en place de l'environnement (préalable)
+Installer SDCC + récupérer le nRF24LE1_SDK
+Monter le programmeur Arduino pour le nRF24LE1 (flasher un premier "hello world" : clignoter une LED ou toggler une broche)
+Installer Arduino IDE + librairie RF24 côté Nano
+Valider une liaison radio basique nRF24L01 ↔ nRF24LE1 sans aucune sécurité (juste un payload fixe qui allume une LED côté récepteur)
+
+Objectif de sortie : chaîne de compilation/flash fonctionnelle des deux côtés, radio qui communique en clair.
+
+Phase 1 — Protocole de trame (structure, sans sécurité)
+Définir le format de trame (ID fob, compteur, commande, réservé pour MAC)
+Implémenter l'émission côté fob sur appui bouton (sans accéléro pour l'instant)
+Implémenter la réception + parsing côté Arduino, log sur série pour debug
+Tester la robustesse basique : trame tronquée, hors de portée, plusieurs fobs
+
+Objectif de sortie : commande "ouvrir/fermer" transmise et exécutée de bout en bout, en clair.
+
+Phase 2 — Anti-rejeu et authentification
+Choisir la primitive crypto (HMAC-SHA256 tronqué ou AES-CMAC) et l'implémenter/porter sur le 8051 (attention à l'empreinte mémoire du nRF24LE1)
+Stocker le compteur en EEPROM interne côté fob (persistant entre resets)
+Implémenter la vérification MAC + fenêtre de tolérance de compteur côté Arduino
+Écrire des tests de rejeu manuels (rejouer une trame capturée, vérifier le rejet)
+Ajouter le chiffrement du payload (confidentialité) si souhaité à ce stade
+
+Objectif de sortie : trame authentifiée, rejeu bloqué, compteur désynchronisé géré (fenêtre tolérante).
+
+Phase 3 — Gestion d'énergie et veille du fob
+Intégrer l'accéléromètre (I2C, config wake-on-motion, seuils)
+Implémenter la machine à états (actif / deep sleep) et le réveil sur interruption
+Mesurer la conso réelle en veille et en fenêtre active (multimètre ou analyseur d'alimentation)
+Ajuster empiriquement seuil de sensibilité et timeout d'inactivité
+
+Objectif de sortie : fob qui dort réellement en profondeur et se réveille de façon fiable, autonomie mesurée.
+
+Phase 4 — Robustesse et durcissement
+Rate-limiting côté récepteur (délai croissant après échecs consécutifs de MAC)
+Validation stricte des trames malformées (taille, bornes) avant tout traitement
+Procédure de resynchronisation manuelle du compteur (ex: séquence spéciale de 2-3 appuis)
+Watchdog timer des deux côtés (récupération automatique en cas de blocage)
+(Facultatif) Frequency hopping dérivé clé/compteur, avec gestion de la fenêtre de recherche de canal en cas de perte de trame
+
+Objectif de sortie : système qui résiste aux pannes/erreurs et aux tentatives de force brute basiques.
+
+Phase 5 — Intégration matérielle voiture
+Câblage relais/MOSFET sur les entrées de la centrale de verrouillage ou simulation des boutons de la télécommande d'origine
+Tests en conditions réelles (portée, interférences habitacle métallique, alimentation 12V → régulateur pour l'Arduino)
+Boîtier/protection IP pour le module côté voiture
+
+Objectif de sortie : système installé et fonctionnel sur le véhicule.
+
+Phase 6 — Durcissement physique et finalisation
+Couper/masquer l'accès SPI/PROG sur le PCB du fob après programmation finale
+Vérifier qu'aucune clé n'est accessible en clair par un debug UART oublié
+Documentation du protocole et de la procédure de pairing/resync (pour vous-même, dans 2 ans)
+Tests d'acceptation finaux : portée, autonomie sur plusieurs semaines, résistance basique aux scénarios d'attaque identifiés (rejeu, brouillage simple)
+
+Objectif de sortie : version "release" utilisable au quotidien.
