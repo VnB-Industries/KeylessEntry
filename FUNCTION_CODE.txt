@@ -4,3 +4,7 @@
 3 Tag with key 1 press
 4 Remote Controller data(4,state,data1,data2)
 5 frye bike volt report
+
+IRK:,0x2C,0xD1,0xC5,0xBB,0xDF,0xAB,0x8C,0xE2,0x55,0x01,0x73,0xDB,0x88,0x3B,0xF9,0xC2
+IRK, Base64 encoded for the Home Assistant Private BLE Device service: LNHFu9+rjOJVAXPbiDv5wg==
+IRK,reverse order for Home Assistant ESPrensence:C2F93B88DB730155E28CABDFBBC5D12C

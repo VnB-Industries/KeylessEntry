@@ -7,7 +7,14 @@
 
 
 
-#define IRK_LIST_NUMBER 2char * IrkListName[IRK_LIST_NUMBER] = {"A","B"};uint8_t irk[IRK_LIST_NUMBER][ESP_BT_OCTET16_LEN]= {	//IRK of A	{0x92,0xE1,0x70,0x7B,0x84,0xDC,0x21,0x4D,0xA6,0x33,0xDC,0x3A,0x3A,0xB2,0x08,0x3F}	//IRK of B	,{0x2E,0xB7,0xB3,0xD4,0xDC,0x5C,0x16,0x73,0xA7,0x9B,0x75,0x0E,0xEC,0xEB,0x60,0x2D}};
+
+#define IRK_LIST_NUMBER 1
+char * IrkListName[IRK_LIST_NUMBER] = {"A"};
+uint8_t irk[IRK_LIST_NUMBER][ESP_BT_OCTET16_LEN]= 
+{
+	//IRK of VAL
+	{0x2C,0xD1,0xC5,0xBB,0xDF,0xAB,0x8C,0xE2,0x55,0x01,0x73,0xDB,0x88,0x3B,0xF9,0xC2}
+};
 
 
 
@@ -25,6 +32,12 @@ unsigned char input[32]={0};
 //hence channel can be 0,1,2 
 byte channel =0; //using single channel to receive
 
+//counters so we can see the radio is alive even when nothing resolves yet
+unsigned long lastStatsPrint = 0;
+unsigned long timeoutCount = 0;
+unsigned long corruptCount = 0;
+unsigned long validCount = 0;
+
 void setup()
 {
     Serial.begin(115200);
@@ -32,6 +45,12 @@ void setup()
     printf_begin();
 
 	BLE.recvBegin(RECV_PAYLOAD_SIZE,channel);
+
+	if(!radio.isChipConnected())
+	{
+		Serial.println(F("ERROR: nRF24L01 not detected, check CE/CSN/SPI wiring!"));
+	}
+	radio.printDetails();
 }
 
 
@@ -50,29 +69,44 @@ void BleDataCheckTask()
 {
 	byte status=BLE.recvPacket((uint8_t*)input,RECV_PAYLOAD_SIZE,channel);
 
-	unsigned char AdMac[MAC_LEN];
-	//0x40 = Advertising package with a random private address. 
-	if(input[0]==0x40)
-	{
-		//Get the MAC address. Reverse order in BT payload.
-		for (byte i = 0; i < MAC_LEN; i++)
-		{
-			AdMac[MAC_LEN-1-i] = input[i+2];
-		}
-		printf("Check = %02X %02X %02X %02X %02X %02X\r\n"
-			,AdMac[0],AdMac[1],AdMac[2],AdMac[3],AdMac[4],AdMac[5]);
+	if(status==RF24BLE_TIMEOUT){ timeoutCount++; }
+	else if(status==RF24BLE_CORRUPT){ corruptCount++; }
+	else if(status==RF24BLE_VALID){ validCount++; }
 
-		for (byte i = 0; i < IRK_LIST_NUMBER; i++)
+	//heartbeat every 2s so we know the loop/radio is alive with no visible activity
+	if(millis()-lastStatsPrint>2000)
+	{
+		lastStatsPrint=millis();
+		printf("stats: valid=%lu corrupt=%lu timeout=%lu\r\n",validCount,corruptCount,timeoutCount);
+	}
+
+	if(status==RF24BLE_TIMEOUT){ return; } //nothing received on this channel in time
+
+	//dump the raw packet: the PDU header byte varies a lot between phones/PDU types,
+	//so print it instead of silently dropping anything that isn't exactly 0x40
+	printf("%s pduType=%02X raw=",status==RF24BLE_VALID?"VALID  ":"CORRUPT",input[0]);
+	for (byte i = 0; i < RECV_PAYLOAD_SIZE; i++){ printf("%02X ",input[i]); }
+	printf("\r\n");
+
+	//AdvA (the MAC) sits right after the header+length bytes for every ADV PDU type
+	//(ADV_IND, ADV_NONCONN_IND, ADV_SCAN_IND, SCAN_RSP, ...), so resolve it regardless
+	//of the header byte value - the whitening of these first bytes doesn't depend on
+	//the assumed total packet length, so it's valid even when the CRC check is CORRUPT.
+	unsigned char AdMac[MAC_LEN];
+	for (byte i = 0; i < MAC_LEN; i++)
+	{
+		AdMac[MAC_LEN-1-i] = input[i+2];
+	}
+
+	for (byte i = 0; i < IRK_LIST_NUMBER; i++)
+	{
+		//Check with all IRK we got one by one.
+		if(btm_ble_addr_resolvable(AdMac,irk[i]))
 		{
-			//Check with all IRK we got one by one.
-			if(btm_ble_addr_resolvable(AdMac,irk[i]))
-			{
-				printf("MacAdd= %02X %02X %02X %02X %02X %02X Belongs to:%s\r\n"
-					,AdMac[0],AdMac[1],AdMac[2],AdMac[3],AdMac[4],AdMac[5]
-				,IrkListName[i]);
-			}
+			printf("MacAdd= %02X %02X %02X %02X %02X %02X Belongs to:%s\r\n"
+				,AdMac[0],AdMac[1],AdMac[2],AdMac[3],AdMac[4],AdMac[5]
+			,IrkListName[i]);
 		}
-		return;
 	}
 }
 
