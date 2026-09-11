@@ -1,0 +1,30 @@
+Résumé du projet RKE/PKS DIY
+
+Le mode avec iPhone fonctionne. Point faible: l ecran doit etre allume pour pinger en BLE.
+
+Donc realisation d une clef smartfob:
+
+Matériel
+
+Keyfob : nRF24LE1 (SoC 8051 + radio intégrée), programmé via Arduino-programmeur (SPI) + toolchain SDCC/nRF24LE1_SDK
+Voiture : Arduino Nano + module nRF24L01, librairie RF24, piloté sur relais/entrées de centrale
+
+Sécurité du protocole radio
+
+Compteur anti-rejeu + MAC (HMAC ou CMAC-AES) sur chaque trame, fenêtre de tolérance limitée
+Chiffrement du payload (pas juste authentification) pour la confidentialité
+Clé secrète partagée par paire fob/récepteur, idéalement avec rotation
+(Facultatif) Frequency hopping dérivé de la clé/compteur : complique le sniffing passif et le brouillage mono-canal, mais n'aide pas contre RollJam ni contre une clé compromise — ajoute de la complexité de synchro pour un gain modéré en usage DIY
+
+Contre-mesure anti-relais
+
+Accéléromètre (LIS3DH/MMA8452Q) en wake-on-motion, deep sleep total (MCU + radio coupés) sinon
+Fenêtre active limitée (~5-10 min) après détection de mouvement, sinon pas de réponse au polling passif
+RSSI comme filtre grossier complémentaire
+
+Points de vigilance restants
+
+Protection physique de la clé (extraction possible du nRF24LE1, pas un secure element)
+Couper l'accès SPI/PROG une fois le fob finalisé
+Rate-limiting côté récepteur, validation stricte des trames
+Compromis autonomie/timeout à ajuster empiriquement (pile CR2032)
