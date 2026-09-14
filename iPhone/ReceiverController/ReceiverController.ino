@@ -1,6 +1,6 @@
+#include <RF24BLE.h>
 #include <SPI.h>
 #include <RF24.h>
-#include <RF24BLE.h>
 #include <printf.h>
 
 #include "irk.h"
@@ -9,7 +9,7 @@
 
 
 #define IRK_LIST_NUMBER 1
-char * IrkListName[IRK_LIST_NUMBER] = {"A"};
+char * IrkListName[IRK_LIST_NUMBER] = {"VAL"};
 uint8_t irk[IRK_LIST_NUMBER][ESP_BT_OCTET16_LEN]= 
 {
 	//IRK of VAL
@@ -28,15 +28,25 @@ RF24BLE BLE(radio);
 
 void BleDataCheckTask();
 unsigned char input[32]={0};
-//there are 3 channels at which BLE broadcasts occur
-//hence channel can be 0,1,2 
-byte channel =0; //using single channel to receive
+//BLE emits each advertising event on ALL 3 primary channels (37,38,39 = index 0,1,2)
+//within a few ms, so a single fixed channel already catches every event with zero
+//gaps. We camp on channel 38 (index 1, 2426 MHz) since it sits between WiFi
+//channels and is usually the cleanest.
+byte channel =1;
 
 //counters so we can see the radio is alive even when nothing resolves yet
 unsigned long lastStatsPrint = 0;
 unsigned long timeoutCount = 0;
 unsigned long corruptCount = 0;
 unsigned long validCount = 0;
+
+//presence tracking: a phone is considered gone if not resolved again within this window
+//kept generous since a locked/idle iPhone advertises far less often than when active
+#define PRESENCE_TIMEOUT_MS 15000
+bool present[IRK_LIST_NUMBER] = {false};
+unsigned long lastSeen[IRK_LIST_NUMBER] = {0};
+
+void checkPresenceTimeouts();
 
 void setup()
 {
@@ -46,10 +56,13 @@ void setup()
 
 	BLE.recvBegin(RECV_PAYLOAD_SIZE,channel);
 
-	if(!radio.isChipConnected())
+	//don't run the main loop against a dead radio - it just produces meaningless noise
+	while(!radio.isChipConnected())
 	{
-		Serial.println(F("ERROR: nRF24L01 not detected, check CE/CSN/SPI wiring!"));
+		Serial.println(F("ERROR: nRF24L01 not detected, check VCC=3.3V/CE/CSN/SPI wiring!"));
+		delay(1000);
 	}
+	Serial.println(F("nRF24L01 detected."));
 	radio.printDetails();
 }
 
@@ -59,7 +72,20 @@ void setup()
 void loop()
 {
 	BleDataCheckTask();
+	checkPresenceTimeouts();
 } // Loop
+
+void checkPresenceTimeouts()
+{
+	for (byte i = 0; i < IRK_LIST_NUMBER; i++)
+	{
+		if(present[i] && millis()-lastSeen[i]>PRESENCE_TIMEOUT_MS)
+		{
+			present[i]=false;
+			printf("OUT: %s\r\n",IrkListName[i]);
+		}
+	}
+}
 
 
 
@@ -80,13 +106,16 @@ void BleDataCheckTask()
 		printf("stats: valid=%lu corrupt=%lu timeout=%lu\r\n",validCount,corruptCount,timeoutCount);
 	}
 
-	if(status==RF24BLE_TIMEOUT){ return; } //nothing received on this channel in time
+	if(status!=RF24BLE_VALID){ return; } //corrupt/timeout: only counted in the heartbeat above
 
 	//dump the raw packet: the PDU header byte varies a lot between phones/PDU types,
 	//so print it instead of silently dropping anything that isn't exactly 0x40
-	printf("%s pduType=%02X raw=",status==RF24BLE_VALID?"VALID  ":"CORRUPT",input[0]);
+	
+	/*
+	printf("VALID pduType=%02X raw=",input[0]);
 	for (byte i = 0; i < RECV_PAYLOAD_SIZE; i++){ printf("%02X ",input[i]); }
 	printf("\r\n");
+	*/
 
 	//AdvA (the MAC) sits right after the header+length bytes for every ADV PDU type
 	//(ADV_IND, ADV_NONCONN_IND, ADV_SCAN_IND, SCAN_RSP, ...), so resolve it regardless
@@ -106,6 +135,13 @@ void BleDataCheckTask()
 			printf("MacAdd= %02X %02X %02X %02X %02X %02X Belongs to:%s\r\n"
 				,AdMac[0],AdMac[1],AdMac[2],AdMac[3],AdMac[4],AdMac[5]
 			,IrkListName[i]);
+
+			lastSeen[i]=millis();
+			if(!present[i])
+			{
+				present[i]=true;
+				printf("NEAR: %s\r\n",IrkListName[i]);
+			}
 		}
 	}
 }
